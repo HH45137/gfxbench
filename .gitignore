@@ -26,3 +26,11 @@ frameworks/systeminfo/android/systeminfo-lib/build/
 *.pyc
 frameworks/cudaw/include/nvidia/
 
+/build*
+3rdparty/poco/Foundation/src/pocomsg.rc
+3rdparty/poco/Foundation/src/MSG00001.bin
+3rdparty/poco/Foundation/src/pocomsg.h
+frameworks/cmake-utils/cmake/Findngrtl.cmake
+frameworks/cmake-utils/cmake/FindPoco.cmake
+frameworks/cmake-utils/cmake/_FindZLIB.cmake
+frameworks/cmake-utils/cmake/_FindOGLX.cmake

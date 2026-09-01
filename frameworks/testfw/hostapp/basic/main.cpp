@@ -4,6 +4,7 @@
  * This file is part of GFXBench. See the top-level LICENSE file for details.
  */
 #include <Poco/Thread.h>
+#include <Poco/ThreadPool.h>
 #include <Poco/RunnableAdapter.h>
 #include <Poco/Util/Application.h>
 #include <Poco/Util/IntValidator.h>

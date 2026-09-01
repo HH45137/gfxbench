@@ -286,20 +286,19 @@ std::string GetLastErrorStdStr()
     if (error)
     {
         LPVOID lpMsgBuf;
-        DWORD bufLen = FormatMessage(
+        DWORD bufLen = FormatMessageA(
             FORMAT_MESSAGE_ALLOCATE_BUFFER |
             FORMAT_MESSAGE_FROM_SYSTEM |
             FORMAT_MESSAGE_IGNORE_INSERTS,
             NULL,
             error,
             MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-            (LPTSTR)&lpMsgBuf,
+            (LPSTR)&lpMsgBuf,
             0, NULL);
         if (bufLen)
         {
             LPCSTR lpMsgStr = (LPCSTR)lpMsgBuf;
             std::string result(lpMsgStr, lpMsgStr + bufLen);
-
             LocalFree(lpMsgBuf);
 
             return result;
@@ -330,8 +329,8 @@ HWNDGraphicsWindow::~HWNDGraphicsWindow()
 
 void HWNDGraphicsWindow::create(int width, int height, const std::string &title, bool fullscreen)
 {
-    WNDCLASS sWC;
-    if (!GetClassInfo(hInstance_, className_.c_str(), &sWC))
+    WNDCLASSA sWC;
+    if (!GetClassInfoA(hInstance_, className_.c_str(), &sWC))
     {
         sWC.style = CS_HREDRAW | CS_VREDRAW;
         sWC.lpfnWndProc = (WNDPROC)WndProc;
@@ -343,7 +342,7 @@ void HWNDGraphicsWindow::create(int width, int height, const std::string &title,
         sWC.lpszMenuName = 0;
         sWC.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
         sWC.lpszClassName = className_.c_str();
-        ATOM registerClass = RegisterClass(&sWC);
+        ATOM registerClass = RegisterClassA(&sWC);
         requireex(registerClass != 0, FORMATCSTR("failed to register window class: %s", GetLastErrorStdStr()));
     }
     DWORD dwStyle_1;
@@ -386,7 +385,7 @@ void HWNDGraphicsWindow::create(int width, int height, const std::string &title,
     RECT sRect;
     SetRect(&sRect, 0, 0, width, height);
     AdjustWindowRectEx(&sRect, dwStyle_1, false, 0);
-    hWnd_ = CreateWindow(className_.c_str(), title.c_str(), dwStyle_2, 0, 0, abs(sRect.left) + sRect.right, abs(sRect.top) + sRect.bottom, NULL, NULL, hInstance_, this);
+    hWnd_ = CreateWindowA(className_.c_str(), title.c_str(), dwStyle_2, 0, 0, abs(sRect.left) + sRect.right, abs(sRect.top) + sRect.bottom, NULL, NULL, hInstance_, this);
     width_ = width;
     height_ = height;
 
@@ -412,7 +411,7 @@ void HWNDGraphicsWindow::destroy()
     if (fullscreen_) {
         ChangeDisplaySettingsEx(NULL, NULL, NULL, 0, NULL);
     }
-    UnregisterClass(className_.c_str(), hInstance_);
+    UnregisterClassA(className_.c_str(), hInstance_);
 }
 
 

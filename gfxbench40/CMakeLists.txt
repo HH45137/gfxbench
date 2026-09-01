@@ -101,11 +101,13 @@ if (NOT TARGET tfw_schemas)
 endif()
 
 if ("${OPT_GRAPHICS}" STREQUAL "GL")
-	find_package(OGLX REQUIRED)
+    if(WIN32)
+        find_package(OGLX REQUIRED)
 
-	message(STATUS "OGLX_headers: ${OGLX_INCLUDE_DIRS}")
-	message(STATUS "OGLX_libs: ${OGLX_LIBRARIES}")
-	include_directories(${OGLX_INCLUDE_DIRS})
+        message(STATUS "OGLX_headers: ${OGLX_INCLUDE_DIRS}")
+        message(STATUS "OGLX_libs: ${OGLX_LIBRARIES}")
+        include_directories(${OGLX_INCLUDE_DIRS})
+    endif()
 endif()
 
 find_package(ngrtl REQUIRED core)

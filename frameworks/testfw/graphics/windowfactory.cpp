@@ -90,6 +90,7 @@ typedef EGLNativeWindowType (*ANDROID_CREATEDISPLAYSURFACE_FUNC)();
 
 void setEGLContextVersionIfFoundInApidef(const std::vector<tfw::ApiDefinition> &apis, EGLGraphicsContext *egl)
 {
+#ifdef HAVE_EGL
     for (size_t i = 0; i < apis.size(); i++)
     {
         const tfw::ApiDefinition &api = apis[i];
@@ -99,6 +100,10 @@ void setEGLContextVersionIfFoundInApidef(const std::vector<tfw::ApiDefinition> &
             break;
         }
     }
+#else
+    (void)apis;
+    (void)egl;
+#endif
 }
 
 WindowFactory::WindowFactory()
@@ -130,6 +135,7 @@ WindowFactory::Wnd *WindowFactory::createGLFW(const std::vector<tfw::ApiDefiniti
 
 WindowFactory::Wnd *WindowFactory::createEGLPB(const std::vector<tfw::ApiDefinition>& api_defs)
 {
+#ifdef HAVE_EGL
     requireex(width_ > 0 && height_ > 0, FORMATCSTR("eglpb: width and height must be greater than 0"));
     ng::scoped_ptr<NullGraphicsWindow> wnd(new NullGraphicsWindow(width_, height_, false));
     ng::scoped_ptr<EGLGraphicsContext> egl(new EGLGraphicsContext());
@@ -138,6 +144,10 @@ WindowFactory::Wnd *WindowFactory::createEGLPB(const std::vector<tfw::ApiDefinit
     egl->setFormat(format_);
     egl->initPBufferSurface(width_, height_);
     return new Wnd(wnd.release(), 0, egl.release());
+#else
+    (void)api_defs;
+    return 0;
+#endif
 }
 
 WindowFactory::Wnd *WindowFactory::createNULL()
@@ -182,6 +192,7 @@ WindowFactory::Wnd *WindowFactory::createEGLCDS(const std::vector<tfw::ApiDefini
 
 WindowFactory::Wnd *WindowFactory::createEGL(const std::vector<tfw::ApiDefinition>& api_defs)
 {
+#ifdef HAVE_EGL
 #ifdef __APPLE__
     return 0;
 #else
@@ -270,16 +281,25 @@ WindowFactory::Wnd *WindowFactory::createEGL(const std::vector<tfw::ApiDefinitio
 #endif
     return new Wnd(wnd.release(), 0, egl.release());
 #endif//__APPLE__
+#else
+    (void)api_defs;
+    return 0;
+#endif//HAVE_EGL
 }
 
 WindowFactory::Wnd *WindowFactory::createEGLFBDEV(const std::vector<tfw::ApiDefinition>& api_defs)
 {
+#ifdef HAVE_EGL
     ng::scoped_ptr<FBDEVGraphicsWindow> wnd(new FBDEVGraphicsWindow(width_, height_));
     ng::scoped_ptr<EGLGraphicsContext> egl(new EGLGraphicsContext());
     setEGLContextVersionIfFoundInApidef(api_defs, egl.get());
     egl->setFormat(format_);
     requireex(egl->initWindowSurface((EGLNativeWindowType)wnd->handle()));
     return new Wnd(wnd.release(), 0, egl.release());
+#else
+    (void)api_defs;
+    return 0;
+#endif
 }
 
 WindowFactory::Wnd *WindowFactory::createDX()

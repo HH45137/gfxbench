@@ -102,12 +102,25 @@ endif()
 
 
 if(NOT NO_GL)
+    # EGL is not available on all desktop platforms (notably Windows), so only
+    # compile the EGL graphics context when an EGL library was actually found.
+    # Without this guard the linker fails with unresolved __imp_egl* symbols on
+    # platforms that have no EGL library (e.g. plain Windows).
+    find_package(EGL QUIET)
+    if(EGL_FOUND)
+        add_definitions(-DHAVE_EGL)
+        list(APPEND platform_libraries ${EGL_LIBRARIES})
+    endif()
     set(sources ${sources}
-                ${dir}/graphics/eglgraphicscontext.h
-                ${dir}/graphics/eglgraphicscontext.cpp
                 ${dir}/graphics/windowfactory.h
                 ${dir}/graphics/windowfactory.cpp
     )
+    if(EGL_FOUND)
+        list(APPEND sources
+            ${dir}/graphics/eglgraphicscontext.h
+            ${dir}/graphics/eglgraphicscontext.cpp
+        )
+    endif()
 endif()
 
 
@@ -145,13 +158,6 @@ if (X11_FOUND)
     include_directories(${X11_INCLUDE_DIR})
     add_definitions(-DHAVE_X11)
     list(APPEND platform_libraries ${X11_LIBRARIES})
-endif()
-
-
-find_package(EGL QUIET)
-if(EGL_FOUND)
-	add_definitions(-DHAVE_EGL)
-	list(APPEND platform_libraries ${EGL_LIBRARIES})
 endif()
 
 include(choose_display_protocol)
@@ -353,6 +359,9 @@ else()
         set(DIRS ${CMAKE_INSTALL_PREFIX}/lib)
         foreach(dir ${CMAKE_PREFIX_PATH})
             list(APPEND DIRS ${dir}/lib)
+            # vcpkg (and other prefixes) place shared libraries under bin/,
+            # without this fixup_bundle cannot resolve the runtime DLLs.
+            list(APPEND DIRS ${dir}/bin)
         endforeach()
         if(NOT APPLE)
             set_target_properties(${EXECUTABLE_NAME} PROPERTIES
