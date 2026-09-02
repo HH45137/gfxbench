@@ -34,3 +34,5 @@ frameworks/cmake-utils/cmake/Findngrtl.cmake
 frameworks/cmake-utils/cmake/FindPoco.cmake
 frameworks/cmake-utils/cmake/_FindZLIB.cmake
 frameworks/cmake-utils/cmake/_FindOGLX.cmake
+frameworks/cmake-utils/cmake/_FindGLEW.cmake
+frameworks/cmake-utils/cmake/_Findepoxy.cmake

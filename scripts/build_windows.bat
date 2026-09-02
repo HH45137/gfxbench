@@ -60,6 +60,17 @@ if "%PLATFORM:~0,6%"=="vs2019" (
     exit /b 1
 )
 
+REM ---------- Detect architecture from PLATFORM ----------
+set "ARCH=x64"
+echo %PLATFORM% | findstr /I "arm64" >nul
+if %errorlevel% equ 0 set "ARCH=arm64"
+REM ---------------------------------------------------------
+
+REM ---------- Map ARCH to vcpkg triplet ----------
+set "VCPKG_TRIPLET=x64-windows"
+if "%ARCH%"=="arm64" set "VCPKG_TRIPLET=arm64-windows"
+REM -------------------------------------------------
+
 REM ---------- Print build parameters ----------
 echo.
 echo --------------- BUILD PARAMETERS ---------------
@@ -69,6 +80,7 @@ echo product version  : %PRODUCT_VERSION%
 echo workspace        : %WORKSPACE%
 echo platform         : %PLATFORM%
 echo platform type    : %PLATFORM_TYPE%
+echo architecture     : %ARCH%
 echo application type : %APPLICATION_TYPE%
 echo configuration    : %CONFIG%
 echo bundle data      : %BUNDLE_DATA%
@@ -93,12 +105,12 @@ if "%MP_COMPILE%"=="true" (
     set "CXXFLAGS=%CXXFLAGS% -MP"
 )
 
-REM ---------- 获取 vcpkg 根目录 ----------
+REM ---------- Get vcpkg root ----------
 if "%VCPKG_ROOT%"=="" (
     echo WARNING: VCPKG_ROOT not set, vcpkg toolchain will not be used.
     set "VCPKG_TOOLCHAIN="
 ) else (
-    REM 将反斜杠转为正斜杠以保证 CMake 兼容
+    REM Convert backslashes to forward slashes for CMake compatibility
     set "VCPKG_ROOT_FIXED=%VCPKG_ROOT:\=/%"
     set "VCPKG_TOOLCHAIN=!VCPKG_ROOT_FIXED!/scripts/buildsystems/vcpkg.cmake"
     echo Using vcpkg toolchain: !VCPKG_TOOLCHAIN!
@@ -122,7 +134,7 @@ set COMMON_OPTS=%COMMON_OPTS% -DCMAKE_SYSTEM_VERSION=10.0
 set COMMON_OPTS=%COMMON_OPTS% -DDISPLAY_PROTOCOL=%DISPLAY_PROTOCOL%
 set COMMON_OPTS=%COMMON_OPTS% -DCMAKE_POLICY_VERSION_MINIMUM="3.5"
 
-REM ---------- 追加 vcpkg 工具链 (若可用) ----------
+REM ---------- Append vcpkg toolchain (if available) ----------
 if not "%VCPKG_TOOLCHAIN%"=="" (
     set COMMON_OPTS=%COMMON_OPTS% -DCMAKE_TOOLCHAIN_FILE="!VCPKG_TOOLCHAIN!"
 )
@@ -146,14 +158,14 @@ if "%EDITOR%"=="true" (
     set COMMON_OPTS=%COMMON_OPTS% -DEDITOR=FALSE
 )
 
-REM ---------- 指定工程主目录 ----------
-REM 与 Linux build.sh 保持一致：frameworks/testfw 是主程序工程，
-REM 它通过 BENCHMARK_DIR 引入 gfxbench 测试模块并生成 testfw_app.exe。
-REM （注意：不单独构建 gfxbench，否则会重复编译且不产出 exe）
+REM ---------- Specify the main project directory ----------
+REM Consistent with the Linux build.sh: frameworks/testfw is the main program project,
+REM which pulls in the gfxbench test modules through BENCHMARK_DIR and builds testfw_app.exe.
+REM (Note: do not build gfxbench separately, it would duplicate work and not produce an exe)
 set "PROJECTS=frameworks/testfw"
 
 REM ---------- Set per-project CMake options ----------
-REM testfw 主程序通过 BENCHMARK_DIR 指向 gfxbench 测试模块目录
+REM testfw main program points BENCHMARK_DIR at the gfxbench test module directory
 set "BENCHMARK_DIR=%WORKSPACE:\=/%/gfxbench"
 set "testfw_OPTS=-DBENCHMARK_DIR=%BENCHMARK_DIR% -DSILENCE_PLUGIN_LOAD_WARNINGS=1 -DBUILD_SHARED_LIBS=0"
 
@@ -172,7 +184,7 @@ REM ---------- Loop over projects and build each ----------
 for %%p in (%PROJECTS%) do (
     set "proj_full=%%p"
     
-    REM 从完整路径取最后一段作为项目名 (gfxbench / testfw)
+    REM Take the last path segment as the project name (gfxbench / testfw)
     for %%f in ("%%p") do set "proj_name=%%~nxf"
     set "proj_name_underscore=!proj_name:-=_!"
     
@@ -226,6 +238,31 @@ if "%current_platform_type%"=="vs2019" (
     exit /b 1
 )
 
+REM ---- Auto-detect MSVC toolset that has an ARM64 compiler ----
+REM On some machines the first/default toolset (e.g. 14.38) has no
+REM Hostx64\arm64\cl.exe, which makes CMake fail compiler detection
+REM with LNK1112 (x64 object linked for an ARM64 target).
+set "TOOLSET_ARG="
+if /I "%ARCH%"=="arm64" (
+    set "FOUND_ARM64_TOOLSET="
+    for /d %%e in ("%ProgramFiles%\Microsoft Visual Studio\2022\*" "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\*") do (
+        if exist "%%e\VC\Tools\MSVC\*" (
+            for /d %%t in ("%%e\VC\Tools\MSVC\*") do (
+                if exist "%%t\bin\Hostx64\arm64\cl.exe" (
+                    set "FOUND_ARM64_TOOLSET=%%t"
+                )
+            )
+        )
+    )
+    if not "!FOUND_ARM64_TOOLSET!"=="" (
+        for %%f in ("!FOUND_ARM64_TOOLSET!") do set "TOOLSET_ARG=-T v143,version=%%~nxf"
+        echo Using MSVC toolset with ARM64 compiler: !TOOLSET_ARG!
+    ) else (
+        echo WARNING: No MSVC toolset with an ARM64 compiler found.
+    )
+)
+REM ---------------------------------------------------------
+
 if exist "%WORKSPACE%\build\%proj_name%" (
     echo Clearing legacy CMake cache directory...
     rmdir /s /q "%WORKSPACE%\build\%proj_name%"
@@ -233,7 +270,7 @@ if exist "%WORKSPACE%\build\%proj_name%" (
 
 set "FIXED_WORKSPACE=%WORKSPACE:\=/%"
 
-REM ──── 🌟 全局锁自动生成带防重复加载守卫的 Findngrtl.cmake 桥接器 🌟 ────
+REM ---- Generate Findngrtl.cmake bridge with a duplicate-load guard ----
 echo Generating solid dependency bridge for ngrtl framework...
 set "BRIDGE_NGRTL=%WORKSPACE%\frameworks\cmake-utils\cmake\Findngrtl.cmake"
 
@@ -244,16 +281,16 @@ echo   set_property(GLOBAL PROPERTY NGRTL_BRIDGE_LOADED TRUE) >> "%BRIDGE_NGRTL%
 echo   message(STATUS "Bridge: First injection of in-tree frameworks/ngrtl into build graph") >> "%BRIDGE_NGRTL%"
 echo   add_subdirectory("%FIXED_WORKSPACE%/frameworks/ngrtl" "${CMAKE_BINARY_DIR}/frameworks/ngrtl" EXCLUDE_FROM_ALL) >> "%BRIDGE_NGRTL%"
 echo endif() >> "%BRIDGE_NGRTL%"
-echo set(NGRTL_INCLUDE_DIRS "%FIXED_WORKSPACE%/frameworks/ngrtl/include/core" CACHE INTERNAL "") >> "%BRIDGE_NGRTL%"
-echo set(NGRTL_INCLUDE_DIR "%FIXED_WORKSPACE%/frameworks/ngrtl/include/core" CACHE INTERNAL "") >> "%BRIDGE_NGRTL%"
+echo set(NGRTL_INCLUDE_DIRS "%FIXED_WORKSPACE%/frameworks/ngrtl/include/core;%FIXED_WORKSPACE%/frameworks/ngrtl/include/pngio" CACHE INTERNAL "") >> "%BRIDGE_NGRTL%"
+echo set(NGRTL_INCLUDE_DIR "%FIXED_WORKSPACE%/frameworks/ngrtl/include/core;%FIXED_WORKSPACE%/frameworks/ngrtl/include/pngio" CACHE INTERNAL "") >> "%BRIDGE_NGRTL%"
 echo set(NGRTL_LIBRARIES ngrtl_core CACHE INTERNAL "") >> "%BRIDGE_NGRTL%"
 echo set(ngrtl_FOUND TRUE) >> "%BRIDGE_NGRTL%"
-REM ngrtl 以静态库构建（BUILD_SHARED_LIBS=0）。未定义 NGRTL_STATIC 时
-REM ngrtl_core_export.h 会把符号标成 __declspec(dllimport)（__imp_*），而静态库
-REM 中没有这些导入符号，导致链接期 LNK2019。此处对引用 ngrtl 的编译单元统一定义。
+REM ngrtl is built as a static library (BUILD_SHARED_LIBS=0). Without NGRTL_STATIC,
+REM ngrtl_core_export.h marks symbols as __declspec(dllimport) (__imp_*), but the static
+REM library has no such import symbols, causing LNK2019 at link time. Define it for ngrtl users.
 echo add_definitions(-DNGRTL_STATIC) >> "%BRIDGE_NGRTL%"
 
-REM ──── 🌟 自动生成 FindOGLX.cmake 桥接器对齐 frameworks/oglx 🌟 ────
+REM ---- Generate _FindOGLX.cmake bridge aligned with frameworks/oglx ----
 echo Generating solid dependency bridge for OGLX framework...
 set "BRIDGE_OGLX=%WORKSPACE%\frameworks\cmake-utils\cmake\_FindOGLX.cmake"
 
@@ -269,81 +306,151 @@ echo set(OGLX_INCLUDE_DIR "%FIXED_WORKSPACE%/frameworks/oglx/dummy" CACHE INTERN
 echo set(OGLX_LIBRARIES oglx_dummy CACHE INTERNAL "") >> "%BRIDGE_OGLX%"
 echo set(OGLX_FOUND TRUE) >> "%BRIDGE_OGLX%"
 
-REM ──── 🌟 动态接管并干掉会报错的 FindZLIB 脚本 🌟 ────
+REM ---- Generate _FindZLIB.cmake interceptor bridge ----
 echo Generating strict interceptor bridge for ZLIB dependency...
 set "BRIDGE_ZLIB=%WORKSPACE%\frameworks\cmake-utils\cmake\_FindZLIB.cmake"
 
 echo # Generated by build_windows.bat > "%BRIDGE_ZLIB%"
 echo message(STATUS "Bridge: Intercepting FindZLIB to prevent -64-mt mismatch error") >> "%BRIDGE_ZLIB%"
-echo set(ZLIB_LIBRARIES "%FIXED_WORKSPACE%/build/zlib/Release/zlib-1.2.8-static.lib" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
-echo set(ZLIB_LIBRARY "%FIXED_WORKSPACE%/build/zlib/Release/zlib-1.2.8-static.lib" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
-echo set(ZLIB_INCLUDE_DIRS "%FIXED_WORKSPACE%/3rdparty/zlib;%FIXED_WORKSPACE%/build/zlib" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
-echo set(ZLIB_INCLUDE_DIR "%FIXED_WORKSPACE%/3rdparty/zlib;%FIXED_WORKSPACE%/build/zlib" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
+REM Detect local zlib static lib name (build_3rdparty.bat outputs to build\zlib-%ARCH%)
+set "ZLIB_LIB_PATH=%FIXED_WORKSPACE%/build/zlib-%ARCH%/Release/zlib-1.2.8-static.lib"
+set "ZLIB_INC_PATH=%FIXED_WORKSPACE%/3rdparty/zlib;%FIXED_WORKSPACE%/build/zlib-%ARCH%"
+if not exist "%WORKSPACE%\build\zlib-%ARCH%\Release\zlib-1.2.8-static.lib" (
+    if exist "%WORKSPACE%\build\zlib-%ARCH%\Release\zlibstatic.lib" (
+        set "ZLIB_LIB_PATH=%FIXED_WORKSPACE%/build/zlib-%ARCH%/Release/zlibstatic.lib"
+    ) else if not "%VCPKG_ROOT_FIXED%"=="" (
+        set "ZLIB_LIB_PATH=%VCPKG_ROOT_FIXED%/installed/%VCPKG_TRIPLET%/lib/zlib.lib"
+        set "ZLIB_INC_PATH=%VCPKG_ROOT_FIXED%/installed/%VCPKG_TRIPLET%/include"
+    )
+)
+echo set(ZLIB_LIBRARIES "%ZLIB_LIB_PATH%" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
+echo set(ZLIB_LIBRARY "%ZLIB_LIB_PATH%" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
+echo set(ZLIB_INCLUDE_DIRS "%ZLIB_INC_PATH%" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
+echo set(ZLIB_INCLUDE_DIR "%ZLIB_INC_PATH%" CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
 echo set(ZLIB_FOUND TRUE CACHE INTERNAL "") >> "%BRIDGE_ZLIB%"
 
-REM ──── 🌟 生成 FindPoco.cmake 桥接器（把 vcpkg 的 Poco:: targets 映射回 POCO_* 变量）🌟 ────
+REM ---- Generate FindPoco.cmake bridge (direct mapping to in-tree headers and built libs) ----
 echo Generating dependency bridge for POCO framework...
 set "BRIDGE_POCO=%WORKSPACE%\frameworks\cmake-utils\cmake\FindPoco.cmake"
 
 echo # Generated by build_windows.bat > "%BRIDGE_POCO%"
-echo if(Poco_FOUND) >> "%BRIDGE_POCO%"
-echo   return() >> "%BRIDGE_POCO%"
-echo endif() >> "%BRIDGE_POCO%"
-echo find_package(Poco CONFIG QUIET COMPONENTS ${Poco_FIND_COMPONENTS}) >> "%BRIDGE_POCO%"
-echo if(NOT Poco_FOUND) >> "%BRIDGE_POCO%"
-echo   set(POCO_FOUND FALSE) >> "%BRIDGE_POCO%"
+echo if(POCO_FOUND) >> "%BRIDGE_POCO%"
 echo   return() >> "%BRIDGE_POCO%"
 echo endif() >> "%BRIDGE_POCO%"
 echo set(POCO_FOUND TRUE) >> "%BRIDGE_POCO%"
-echo set(POCO_LIBRARIES "") >> "%BRIDGE_POCO%"
-echo foreach(_poco_comp ${Poco_FIND_COMPONENTS}) >> "%BRIDGE_POCO%"
-echo   if(TARGET Poco::${_poco_comp}) >> "%BRIDGE_POCO%"
-echo     list(APPEND POCO_LIBRARIES Poco::${_poco_comp}) >> "%BRIDGE_POCO%"
-echo     set(POCO_${_poco_comp}_FOUND TRUE) >> "%BRIDGE_POCO%"
-echo   endif() >> "%BRIDGE_POCO%"
-echo endforeach() >> "%BRIDGE_POCO%"
-echo if(TARGET Poco::Foundation) >> "%BRIDGE_POCO%"
-echo   get_target_property(POCO_INCLUDE_DIRS Poco::Foundation INTERFACE_INCLUDE_DIRECTORIES) >> "%BRIDGE_POCO%"
-echo endif() >> "%BRIDGE_POCO%"
+echo set(POCO_DEFINITIONS -DPOCO_NO_AUTOMATIC_LIBS -DPOCO_STATIC) >> "%BRIDGE_POCO%"
+echo set(POCO_INCLUDE_DIRS >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/3rdparty/poco/Foundation/include" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/3rdparty/poco/XML/include" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/3rdparty/poco/JSON/include" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/3rdparty/poco/Util/include" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/3rdparty/poco/Net/include") >> "%BRIDGE_POCO%"
+echo set(POCO_LIBRARIES >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/build/poco-%ARCH%/lib/Release/PocoFoundationmd.lib" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/build/poco-%ARCH%/lib/Release/PocoXMLmd.lib" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/build/poco-%ARCH%/lib/Release/PocoJSONmd.lib" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/build/poco-%ARCH%/lib/Release/PocoUtilmd.lib" >> "%BRIDGE_POCO%"
+echo   "%FIXED_WORKSPACE%/build/poco-%ARCH%/lib/Release/PocoNetmd.lib" >> "%BRIDGE_POCO%"
+echo   iphlpapi.lib ws2_32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib user32.lib gdi32.lib) >> "%BRIDGE_POCO%"
 
-REM 检测本地真实的 libpng 静态库名称；若本地未构建则回退到 vcpkg 提供的 libpng
-set "PNG_LIB_PATH=%FIXED_WORKSPACE%/build/libpng/Release/libpng16_static.lib"
-set "PNG_INC_PATH=%FIXED_WORKSPACE%/3rdparty/libpng;%FIXED_WORKSPACE%/build/libpng"
-if not exist "%WORKSPACE%\build\libpng\Release\libpng16_static.lib" (
-    if exist "%WORKSPACE%\build\libpng\Release\png.lib" set "PNG_LIB_PATH=%FIXED_WORKSPACE%/build/libpng/Release/png.lib"
-    if exist "%WORKSPACE%\build\libpng\Release\libpng.lib" set "PNG_LIB_PATH=%FIXED_WORKSPACE%/build/libpng/Release/libpng.lib"
-    REM 本地没有构建 libpng：回退到 vcpkg（提供 pnglibconf.h）
+REM Detect real local libpng static library name; fall back to vcpkg libpng if not built locally
+set "PNG_LIB_PATH=%FIXED_WORKSPACE%/build/libpng-%ARCH%/Release/png-1.6.7-static.lib"
+set "PNG_INC_PATH=%FIXED_WORKSPACE%/3rdparty/libpng;%FIXED_WORKSPACE%/build/libpng-%ARCH%"
+if not exist "%WORKSPACE%\build\libpng-%ARCH%\Release\png-1.6.7-static.lib" (
+    if exist "%WORKSPACE%\build\libpng-%ARCH%\Release\libpng16_static.lib" set "PNG_LIB_PATH=%FIXED_WORKSPACE%/build/libpng-%ARCH%/Release/libpng16_static.lib"
+    if exist "%WORKSPACE%\build\libpng-%ARCH%\Release\png.lib" set "PNG_LIB_PATH=%FIXED_WORKSPACE%/build/libpng-%ARCH%/Release/png.lib"
+    if exist "%WORKSPACE%\build\libpng-%ARCH%\Release\libpng.lib" set "PNG_LIB_PATH=%FIXED_WORKSPACE%/build/libpng-%ARCH%/Release/libpng.lib"
+    REM Local libpng not built: fall back to vcpkg (provides pnglibconf.h)
     if not "%VCPKG_ROOT_FIXED%"=="" (
-        if exist "%VCPKG_ROOT%\installed\x64-windows\include\pnglibconf.h" (
-            set "PNG_LIB_PATH=%VCPKG_ROOT_FIXED%/installed/x64-windows/lib/libpng16.lib"
-            set "PNG_INC_PATH=%VCPKG_ROOT_FIXED%/installed/x64-windows/include"
+        if exist "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\include\pnglibconf.h" (
+            set "PNG_LIB_PATH=%VCPKG_ROOT_FIXED%/installed/%VCPKG_TRIPLET%/lib/libpng16.lib"
+            set "PNG_INC_PATH=%VCPKG_ROOT_FIXED%/installed/%VCPKG_TRIPLET%/include"
         )
     )
 )
 
-REM 检测本地是否有编译完的 GLEW 第三方静态库
-set "GLEW_LIB_PATH=%FIXED_WORKSPACE%/build/glew/lib/Release/glew32s.lib"
+REM Detect whether a local compiled GLEW third-party static library exists
+set "GLEW_LIB_PATH=%FIXED_WORKSPACE%/build/glew-%ARCH%/lib/Release/glew32s.lib"
 
-if not exist "%WORKSPACE%\build\glew\lib\Release\glew32s.lib" (
-    REM 本地没有构建 GLEW：优先回退到 vcpkg 提供的 glew32.lib，否则退回 opengl32.lib
-    set "GLEW_LIB_PATH=opengl32.lib"
-    if not "%VCPKG_ROOT_FIXED%"=="" (
-        if exist "%VCPKG_ROOT%\installed\x64-windows\lib\glew32.lib" (
-            set "GLEW_LIB_PATH=%VCPKG_ROOT_FIXED%/installed/x64-windows/lib/glew32.lib"
+if not exist "%WORKSPACE%\build\glew-%ARCH%\lib\Release\glew32s.lib" (
+    REM The 3rdparty/glew CMake build outputs GLEW.lib directly under Release/
+    if exist "%WORKSPACE%\build\glew-%ARCH%\Release\GLEW.lib" set "GLEW_LIB_PATH=%FIXED_WORKSPACE%/build/glew-%ARCH%/Release/GLEW.lib"
+    if exist "%WORKSPACE%\build\glew-%ARCH%\lib\Release\glew32.lib" set "GLEW_LIB_PATH=%FIXED_WORKSPACE%/build/glew-%ARCH%/lib/Release/glew32.lib"
+    if exist "%WORKSPACE%\build\glew-%ARCH%\Release\glew32.lib" set "GLEW_LIB_PATH=%FIXED_WORKSPACE%/build/glew-%ARCH%/Release/glew32.lib"
+    if not exist "!GLEW_LIB_PATH!" (
+        REM Local GLEW not built: prefer vcpkg glew32.lib, otherwise fall back to opengl32.lib
+        set "GLEW_LIB_PATH=opengl32.lib"
+        if not "%VCPKG_ROOT_FIXED%"=="" (
+            if exist "%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\lib\glew32.lib" (
+                set "GLEW_LIB_PATH=%VCPKG_ROOT_FIXED%/installed/%VCPKG_TRIPLET%/lib/glew32.lib"
+            )
         )
     )
 )
 
-REM 执行 CMake 配置 (新注入 -D 宏进行强制别名映射，如果 CMakeLists.txt 内部使用的是变量路径，可直接完成运行时覆写)
-cmake -S "%FIXED_WORKSPACE%/%proj_path%" -G "%GEN%" -A x64 -DCMAKE_CONFIGURATION_TYPES=%CONFIG% ^
+REM ---- Generate _FindGLEW.cmake bridge (bypasses broken vcpkg GLEW config lookup) ----
+REM This file is generated per-machine and is listed in .gitignore (alias file,
+REM so the tracked FindGLEW.cmake is never overwritten).
+REM FindOGLX.cmake calls find_package(GLEW); the vcpkg toolchain may find the
+REM x64 GLEW config and report it, but leave GLEW_LIBRARIES empty, so OGLX falls
+REM back to the system GL/gl.h (GL 1.1) and glBindBuffer/GLintptr are undefined.
+set "BRIDGE_GLEW=%WORKSPACE%\frameworks\cmake-utils\cmake\_FindGLEW.cmake"
+
+echo # Generated by build_windows.bat > "%BRIDGE_GLEW%"
+echo add_definitions(-DGLEW_STATIC) >> "%BRIDGE_GLEW%"
+echo if(GLEW_FOUND) >> "%BRIDGE_GLEW%"
+echo   return() >> "%BRIDGE_GLEW%"
+echo endif() >> "%BRIDGE_GLEW%"
+echo set(GLEW_FOUND TRUE) >> "%BRIDGE_GLEW%"
+echo set(GLEW_LIBRARIES "%GLEW_LIB_PATH%") >> "%BRIDGE_GLEW%"
+echo set(GLEW_LIBRARY "%GLEW_LIB_PATH%") >> "%BRIDGE_GLEW%"
+echo set(GLEW_INCLUDE_DIRS "%FIXED_WORKSPACE%/3rdparty/glew/include") >> "%BRIDGE_GLEW%"
+echo set(GLEW_INCLUDE_DIR "%FIXED_WORKSPACE%/3rdparty/glew/include") >> "%BRIDGE_GLEW%"
+echo add_library(GLEW::GLEW INTERFACE IMPORTED) >> "%BRIDGE_GLEW%"
+echo set_target_properties(GLEW::GLEW PROPERTIES >> "%BRIDGE_GLEW%"
+echo   INTERFACE_INCLUDE_DIRECTORIES "%FIXED_WORKSPACE%/3rdparty/glew/include" >> "%BRIDGE_GLEW%"
+echo   INTERFACE_LINK_LIBRARIES "%GLEW_LIB_PATH%") >> "%BRIDGE_GLEW%"
+REM ---------------------------------------------------------
+
+REM ---- Generate _Findepoxy.cmake bridge (maps built epoxy.lib to CMake vars) ----
+REM This file is generated per-machine and is listed in .gitignore (alias file,
+REM so the tracked Findepoxy.cmake is never overwritten).
+REM The in-tree epoxy-config.cmake looks for "libepoxy.a"/"epoxy", but MSVC
+REM produces "epoxy.lib", so find_package(epoxy) fails and HAVE_EPOXY is never
+REM defined, which makes eglgraphicscontext.h fall back to <EGL/egl.h>.
+set "BRIDGE_EPOXY=%WORKSPACE%\frameworks\cmake-utils\cmake\_Findepoxy.cmake"
+
+echo # Generated by build_windows.bat > "%BRIDGE_EPOXY%"
+echo add_definitions(-DEPOXY_STATIC=1) >> "%BRIDGE_EPOXY%"
+echo if(epoxy_FOUND) >> "%BRIDGE_EPOXY%"
+echo   return() >> "%BRIDGE_EPOXY%"
+echo endif() >> "%BRIDGE_EPOXY%"
+echo set(epoxy_FOUND TRUE) >> "%BRIDGE_EPOXY%"
+echo set(EPOXY_FOUND TRUE) >> "%BRIDGE_EPOXY%"
+echo set(epoxy_LIBRARIES "%FIXED_WORKSPACE%/build/libepoxy-%ARCH%/Release/epoxy.lib") >> "%BRIDGE_EPOXY%"
+echo set(epoxy_LIBRARY "%FIXED_WORKSPACE%/build/libepoxy-%ARCH%/Release/epoxy.lib") >> "%BRIDGE_EPOXY%"
+echo set(epoxy_INCLUDE_DIRS "%FIXED_WORKSPACE%/3rdparty/libepoxy/include;%FIXED_WORKSPACE%/3rdparty/libepoxy/khronos/include") >> "%BRIDGE_EPOXY%"
+echo set(epoxy_INCLUDE_DIR "%FIXED_WORKSPACE%/3rdparty/libepoxy/include;%FIXED_WORKSPACE%/3rdparty/libepoxy/khronos/include") >> "%BRIDGE_EPOXY%"
+echo add_library(epoxy INTERFACE IMPORTED) >> "%BRIDGE_EPOXY%"
+echo set_target_properties(epoxy PROPERTIES >> "%BRIDGE_EPOXY%"
+echo   INTERFACE_INCLUDE_DIRECTORIES "%FIXED_WORKSPACE%/3rdparty/libepoxy/include;%FIXED_WORKSPACE%/3rdparty/libepoxy/khronos/include" >> "%BRIDGE_EPOXY%"
+echo   INTERFACE_LINK_LIBRARIES "%FIXED_WORKSPACE%/build/libepoxy-%ARCH%/Release/epoxy.lib") >> "%BRIDGE_EPOXY%"
+REM ---------------------------------------------------------------
+
+REM Run CMake configure (inject -D macros to force alias mapping; if CMakeLists.txt uses variable paths, this overrides them at runtime)
+cmake -S "%FIXED_WORKSPACE%/%proj_path%" -G "%GEN%" -A %ARCH% !TOOLSET_ARG! -DCMAKE_CONFIGURATION_TYPES=%CONFIG% ^
 -DCMAKE_MODULE_PATH="%FIXED_WORKSPACE%/frameworks/cmake-utils/cmake;%FIXED_WORKSPACE%/frameworks/ngrtl;%FIXED_WORKSPACE%/frameworks/ngrtl/libs/core;%FIXED_WORKSPACE%/frameworks/oglx" ^
--DCMAKE_PREFIX_PATH="%FIXED_WORKSPACE%/build/libpng;%FIXED_WORKSPACE%/3rdparty/libpng;%FIXED_WORKSPACE%/build/zlib;%FIXED_WORKSPACE%/3rdparty/zlib;%FIXED_WORKSPACE%/build/libepoxy;%FIXED_WORKSPACE%/3rdparty/libepoxy;%FIXED_WORKSPACE%/build/poco;%FIXED_WORKSPACE%/3rdparty/poco;%FIXED_WORKSPACE%/frameworks/ngrtl;%FIXED_WORKSPACE%/frameworks/oglx" ^
+-DCMAKE_PREFIX_PATH="%FIXED_WORKSPACE%/build/libpng-%ARCH%;%FIXED_WORKSPACE%/3rdparty/libpng;%FIXED_WORKSPACE%/build/zlib-%ARCH%;%FIXED_WORKSPACE%/3rdparty/zlib;%FIXED_WORKSPACE%/build/libepoxy-%ARCH%;%FIXED_WORKSPACE%/3rdparty/libepoxy;%FIXED_WORKSPACE%/build/poco-%ARCH%;%FIXED_WORKSPACE%/3rdparty/poco;%FIXED_WORKSPACE%/frameworks/ngrtl;%FIXED_WORKSPACE%/frameworks/oglx" ^
 -DGFX_TEST_10_DIR="%FIXED_WORKSPACE%/%proj_path%/src/tests/10" ^
 -DGLEW_LIBRARIES="%GLEW_LIB_PATH%" ^
 -DGLEW_LIBRARY="%GLEW_LIB_PATH%" ^
 -DGLEW_INCLUDE_DIRS="%FIXED_WORKSPACE%/3rdparty/glew/include" ^
 -DGLEW_INCLUDE_DIR="%FIXED_WORKSPACE%/3rdparty/glew/include" ^
 -DGLEW_FOUND=TRUE ^
+-DZLIB_LIBRARIES="%ZLIB_LIB_PATH%" ^
+-DZLIB_LIBRARY="%ZLIB_LIB_PATH%" ^
+-DZLIB_INCLUDE_DIRS="%ZLIB_INC_PATH%" ^
+-DZLIB_INCLUDE_DIR="%ZLIB_INC_PATH%" ^
 -DPNG_LIBRARIES="%PNG_LIB_PATH%" ^
 -DPNG_LIBRARY="%PNG_LIB_PATH%" ^
 -DPNG_INCLUDE_DIRS="%PNG_INC_PATH%" ^

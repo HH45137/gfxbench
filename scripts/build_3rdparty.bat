@@ -1,7 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
 
-python3
 
 REM ============================================
 REM   Windows (Visual Studio) 3rdParty Build Script
