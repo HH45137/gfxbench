@@ -99,8 +99,8 @@ if %errorlevel% equ 0 (
     echo %PRODUCT_ID% | findstr /I "_dx" >nul
     if errorlevel 1 (
         if exist "3rdparty\glew" if exist "3rdparty\glfw" (
-            set "PROJECTS=%PROJECTS% 3rdparty\glew 3rdparty\glfw"
-            set "PROJECTS=%PROJECTS% frameworks\ngl\src\v1.0.3\loader"
+            set "PROJECTS=!PROJECTS! 3rdparty\glew 3rdparty\glfw"
+            set "PROJECTS=!PROJECTS! frameworks\ngl\src\v1.0.3\loader"
         )
     )
 )
