@@ -1,9 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 
+python3
+
 REM ============================================
 REM   Windows (Visual Studio) 3rdParty Build Script
-REM   Ported from build_3rdparty.sh (Fixed ZLIB & Product)
 REM ============================================
 
 REM ---------- Default parameters ----------
@@ -16,10 +17,16 @@ if "%PLATFORM%"=="" (
     exit /b 1
 )
 
+REM ---------- Detect architecture from PLATFORM ----------
+set "ARCH=x64"
+echo %PLATFORM% | findstr /I "arm64" >nul
+if %errorlevel% equ 0 set "ARCH=arm64"
+REM ---------------------------------------------------------
+
 if "%CONFIG%"=="" set "CONFIG=Release"
 if "%ENABLE_CLANG%"=="" set "ENABLE_CLANG=false"
 if "%USE_WAYLAND%"=="" set "USE_WAYLAND=false"
-if "%MP_COMPILE%"=="" set "MP_COMPILE=false"
+if "%MP_COMPILE%"=="" set "MP_COMPILE=true"
 
 REM ---------- Load product description via Parse ----------
 set "PRODUCT_FILE="
@@ -85,7 +92,6 @@ if "%MP_COMPILE%"=="true" (
     echo Enable parallel build for MSVC MSBuild
     set "CFLAGS=%CFLAGS% -MP"
     set "CXXFLAGS=%CXXFLAGS% -MP"
-    set "MSBUILD_OPTS=--jobs 16 /maxcpucount:16 /nodeReuse:false"
 )
 
 REM ---------- Platform validation & conditional projects ----------
@@ -129,22 +135,52 @@ for %%p in (%ALL_PROJECTS%) do (
     ) else (
         echo Configuring CMake for !NAME!...
         
+        REM ---- Determine generator and architecture ----
         set "GEN_ARG="
-        echo %PLATFORM% | findstr /I "vs2022" >nul && set "GEN_ARG=-G "Visual Studio 17 2022" -A x64"
-        echo %PLATFORM% | findstr /I "vs2019" >nul && set "GEN_ARG=-G "Visual Studio 16 2019" -A x64"
-        if "!GEN_ARG!"=="" set "GEN_ARG=-G "Visual Studio 17 2022" -A x64"
+        echo %PLATFORM% | findstr /I "vs2022" >nul && set "GEN_ARG=-G "Visual Studio 17 2022" -A %ARCH%"
+        echo %PLATFORM% | findstr /I "vs2019" >nul && set "GEN_ARG=-G "Visual Studio 16 2019" -A %ARCH%"
+        if "!GEN_ARG!"=="" set "GEN_ARG=-G "Visual Studio 17 2022" -A %ARCH%"
+        REM ----------------------------------------------
 
-        set "ZLIB_ADDITIONAL_OPTS="
-        if exist "%WORKSPACE%\build\zlib\Release\zlib-1.2.8-static.lib" (
-            set "ZLIB_ADDITIONAL_OPTS=-DZLIB_LIBRARY="%WORKSPACE%\build\zlib\Release\zlib-1.2.8-static.lib" -DZLIB_INCLUDE_DIR="%WORKSPACE%\3rdparty\zlib;%WORKSPACE%\build\zlib""
-        ) else if exist "%WORKSPACE%\build\zlib\Release\zlibstatic.lib" (
-            set "ZLIB_ADDITIONAL_OPTS=-DZLIB_LIBRARY="%WORKSPACE%\build\zlib\Release\zlibstatic.lib" -DZLIB_INCLUDE_DIR="%WORKSPACE%\3rdparty\zlib;%WORKSPACE%\build\zlib""
+        REM ---- Auto-detect MSVC toolset that has an ARM64 compiler ----
+        set "TOOLSET_ARG="
+        if /I "%ARCH%"=="arm64" (
+            set "FOUND_ARM64_TOOLSET="
+            for /d %%e in ("%ProgramFiles%\Microsoft Visual Studio\2022\*" "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\*") do (
+                if exist "%%e\VC\Tools\MSVC\*" (
+                    for /d %%t in ("%%e\VC\Tools\MSVC\*") do (
+                        if exist "%%t\bin\Hostx64\arm64\cl.exe" (
+                            set "FOUND_ARM64_TOOLSET=%%t"
+                        )
+                    )
+                )
+            )
+            if not "!FOUND_ARM64_TOOLSET!"=="" (
+                for %%f in ("!FOUND_ARM64_TOOLSET!") do set "TOOLSET_ARG=-T v143,version=%%~nxf"
+                echo Using MSVC toolset with ARM64 compiler: !TOOLSET_ARG!
+            ) else (
+                echo WARNING: No MSVC toolset with an ARM64 compiler found.
+            )
         )
+        REM ---------------------------------------------------------
 
-        cmake -S "%WORKSPACE%\!proj_path!" !GEN_ARG! -DCMAKE_CONFIGURATION_TYPES=%CONFIG% ^
+        REM ---- Set build directory with architecture suffix ----
+        set "BUILD_DIR=%WORKSPACE%\build\!NAME!-%ARCH%"
+        REM ------------------------------------------------------
+
+        REM ---- Locate ZLIB library according to current architecture ----
+        set "ZLIB_ADDITIONAL_OPTS="
+        if exist "%WORKSPACE%\build\zlib-%ARCH%\Release\zlib-1.2.8-static.lib" (
+            set "ZLIB_ADDITIONAL_OPTS=-DZLIB_LIBRARY="%WORKSPACE%\build\zlib-%ARCH%\Release\zlib-1.2.8-static.lib" -DZLIB_INCLUDE_DIR="%WORKSPACE%\3rdparty\zlib;%WORKSPACE%\build\zlib-%ARCH%""
+        ) else if exist "%WORKSPACE%\build\zlib-%ARCH%\Release\zlibstatic.lib" (
+            set "ZLIB_ADDITIONAL_OPTS=-DZLIB_LIBRARY="%WORKSPACE%\build\zlib-%ARCH%\Release\zlibstatic.lib" -DZLIB_INCLUDE_DIR="%WORKSPACE%\3rdparty\zlib;%WORKSPACE%\build\zlib-%ARCH%""
+        )
+        REM -----------------------------------------------------------------
+
+        cmake -S "%WORKSPACE%\!proj_path!" !GEN_ARG! !TOOLSET_ARG! -DCMAKE_CONFIGURATION_TYPES=%CONFIG% ^
               -DCMAKE_POLICY_VERSION_MINIMUM="3.5" ^
               %COMMON_OPTS% !proj_opts! !ZLIB_ADDITIONAL_OPTS! -DPRODUCT_NAME=%PRODUCT_NAME% ^
-              -B "%WORKSPACE%\build\!NAME!"
+              -B "!BUILD_DIR!"
         
         if errorlevel 1 (
             echo ERROR: CMake configuration failed for !NAME!
@@ -152,7 +188,7 @@ for %%p in (%ALL_PROJECTS%) do (
         )
         
         echo Building !NAME!...
-        cmake --build "%WORKSPACE%\build\!NAME!" --config %CONFIG% !proj_target! %MSBUILD_OPTS%
+        cmake --build "!BUILD_DIR!" --config %CONFIG% !proj_target! %MSBUILD_OPTS% --parallel 30
         
         if errorlevel 1 (
             echo ERROR: Build failed for !NAME!
@@ -173,6 +209,7 @@ echo ######################################################
 echo # PROJECT:  %~1
 echo # PLATFORM: %PLATFORM%
 echo # CONFIG:   %CONFIG%
+echo # ARCH:     %ARCH%
 echo ######################################################
 exit /b
 
